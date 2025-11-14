@@ -1,8 +1,6 @@
----
+# 🌸 345 Consult – Téléconsultation entre femmes
 
-## 🌸 345 Consult – Téléconsultation entre femmes
-
-**345 Consult** est une application de téléconsultation pensée **par des femmes, pour des femmes**, avec une équipe exclusivement composée de **médecines femmes**. Elle vise à créer un espace de soin bienveillant, confidentiel et accessible.
+**345 Consult** est une application de téléconsultation pensée **par des femmes, pour des femmes**, avec une équipe exclusivement composée de **médecins femmes**. Elle vise à créer un espace de soin bienveillant, confidentiel et accessible.
 
 ---
 
