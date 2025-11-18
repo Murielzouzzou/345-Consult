@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Agent conversationnel</title>
+<style>
+:root{
+--bg:#f5f7fb; --panel:#ffffff; --muted:#6b7280; --primary:#0f62fe;
+--me:#e6f0ff; --bot:#f1f5f9; --radius:12px;
+font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+html,body{height:100%; margin:0; background:var(--bg); color:#0f1724;}
+.wrap{
+max-width:920px; margin:28px auto; display:grid; grid-template-columns: 360px 1fr; gap:20px;
+padding:20px;
+}
+.panel{
+background:var(--panel); border-radius:var(--radius); box-shadow:0 6px 24px rgba(12,18,32,0.08);
+padding:16px; display:flex; flex-direction:column; min-height:520px;
+}
+.sidebar h2{margin:6px 0 12px 0; font-size:18px;}
+.history-list{flex:1; overflow:auto; padding-right:6px;}
+.history-item{padding:10px; border-radius:10px; margin-bottom:10px; background:linear-gradient(90deg,#f8fafc,#ffffff); cursor:pointer; font-size:14px;}
+.history-item small{display:block;color:var(--muted); margin-top:6px;}
+
+/* chat area */
+.chat-area{display:flex; flex-direction:column; height:520px;}
+.messages{flex:1; overflow:auto; padding:18px; background:linear-gradient(180deg, rgba(15,19,36,0.02), transparent); border-radius:10px;}
+.msg{display:flex; gap:12px; margin-bottom:12px; align-items:flex-end;}
+.msg.me{justify-content:flex-end;}
+.bubble{
+max-width:72%; padding:10px 12px; border-radius:12px; line-height:1.35; box-shadow:0 2px 6px rgba(12,18,32,0.04);
+}
+.bubble.me{background:var(--me); border-bottom-right-radius:6px;}
+.bubble.bot{background:var(--bot); border-bottom-left-radius:6px;}
+.meta{font-size:12px; color:var(--muted); margin-bottom:6px;}
+.controls{display:flex; gap:8px; margin-top:12px; align-items:center;}
+textarea#input{flex:1; min-height:48px; max-height:140px; resize:none; padding:10px 12px; border-radius:10px; border:1px solid #e6e9ee; font-size:15px;}
+button#send{background:var(--primary); color:white; border:none; padding:10px 14px; border-radius:10px; cursor:pointer;}
+button#send:disabled{opacity:0.55; cursor:not-allowed;}
+.typing{font-style:italic; color:var(--muted); margin-left:6px;}
+.suggestions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+.suggestions button{background:#f3f4f6; border:1px solid #e5e7eb; padding:6px 10px; border-radius:8px; cursor:pointer;}
+@media (max-width:900px){
+.wrap{grid-template-columns: 1fr; padding:12px;}
+.panel{min-height:480px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="panel sidebar" aria-label="Historique et options">
+<h2>Mes conversations</h2>
+<div class="history-list" id="convos"></div>
+<div style="margin-top:12px;">
+<button id="newConv">+ Nouvelle conversation</button>
+<button id="clearAll" style="margin-left:8px;">Effacer tout</button>
+</div>
+<small style="display:block;margin-top:14px;color:var(--muted)">L'agent fonctionne localement. Pour utiliser un véritable modèle LLM, configurez un backend sécurisé; voir notes plus bas.</small>
+</div>
+
+<div class="panel chat-area" role="main" aria-label="Zone de conversation">
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+<h2 id="convTitle">Nouvelle conversation</h2>
+<small id="convTimestamp" style="color:var(--muted)"></small>
+</div>
+
+<div class="messages" id="messages" aria-live="polite"></div>
+
+<div class="typing" id="typing" style="display:none">L'agent écrit…</div>
+
+<div class="suggestions" id="suggestions">
+<button data-text="Bonjour ! Peux-tu te présenter ?">Se présenter</button>
+<button data-text="Aide-moi à planifier une journée productive.">Plan journée</button>
+<button data-text="Donne-moi une blague courte.">Blague</button>
+</div>
+
+<div class="controls" style="margin-top:8px;">
+<textarea id="input" placeholder="Écris un message... (Entrée = envoyer, Shift+Entrée = nouvelle ligne)"></textarea>
+<button id="send">Envoyer</button>
+</div>
+</div>
+</div>
+
+<script>
+/* === Stockage et structure des conversations === */
+const STORAGE_KEY = 'chatbot_convos_v1';
+let convos = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+let currentId = null;
+
+const $convos = document.getElementById('convos');
+const $messages = document.getElementById('messages');
+const $input = document.getElementById('input');
+const $send = document.getElementById('send');
+const $typing = document.getElementById('typing');
+const $convTitle = document.getElementById('convTitle');
+const $convTimestamp = document.getElementById('convTimestamp');
+const $suggestions = document.getElementById('suggestions');
+
+function save(){
+localStorage.setItem(STORAGE_KEY, JSON.stringify(convos));
+}
+
+function createConversation(title='Nouvelle conversation'){
+const id = 'c_' + Date.now();
+const conv = { id, title, createdAt: new Date().toISOString(), messages: [] };
+convos.unshift(conv);
+save();
+renderConvos();
+openConversation(id);
+}
+
+function renderConvos(){
+$convos.innerHTML = '';
+convos.forEach(c=>{
+const el = document.createElement('div');
+el.className = 'history-item';
+el.tabIndex = 0;
+el.innerHTML = `<strong>${c.title}</strong><small>${new Date(c.createdAt).toLocaleString()}</small>`;
+el.addEventListener('click', ()=> openConversation(c.id));
+el.addEventListener('keypress', (e)=>{ if(e.key==='Enter') openConversation(c.id) });
+$convos.appendChild(el);
+});
+}
+
+function openConversation(id){
+const conv = convos.find(x=>x.id===id);
+if(!conv) return;
+currentId = id;
+$convTitle.textContent = conv.title || 'Conversation';
+$convTimestamp.textContent = new Date(conv.createdAt).toLocaleString();
+renderMessages(conv.messages);
+}
+
+function renderMessages(messages){
+$messages.innerHTML = '';
+messages.forEach(m=>{
+const el = document.createElement('div');
+el.className = 'msg ' + (m.role==='user' ? 'me' : 'bot');
+const bubble = document.createElement('div');
+bubble.className = 'bubble ' + (m.role==='user' ? 'me' : 'bot');
+if(m.role==='user'){
+bubble.textContent = m.content;
+} else {
+// allow simple inline formatting but avoid dangerously setting HTML from unknown source
+bubble.textContent = m.content;
+}
+el.appendChild(bubble);
+$messages.appendChild(el);
+});
+$messages.scrollTop = $messages.scrollHeight;
+}
+
+/* === Utilitaires === */
+function appendMessage(role, text){
+if(!currentId) createConversation();
+const conv = convos.find(c=>c.id===currentId);
+const msg = { role, content: text, ts: new Date().toISOString() };
+conv.messages.push(msg);
+save();
+renderMessages(conv.messages);
+}
+
+/* === Envoi / logique d'appel serveur ou fallback local === */
+async function sendMessage(text){
+if(!text || !text.trim()) return;
+const userText = text.trim();
+$input.value = '';
+$send.disabled = true;
+appendMessage('user', userText);
+
+// show typing
+$typing.style.display = 'block';
+
+try {
+// Attempt call to /api/chat (developer should implement server-side LLM proxy).
+// If server is not reachable or returns error, fallbackLocal will be used.
+const resp = await fetch('/api/chat', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+message: userText,
+history: convos.find(c=>c.id===currentId).messages
+})
+});
+if(!resp.ok) throw new Error('no-server');
+const payload = await resp.json();
+const botReply = payload?.reply ?? 'Désolé, je n’ai pas de réponse.';
+appendMessage('assistant', botReply);
+} catch(err) {
+// Fallback simple logic local
+const botReply = fallbackLocal(userText);
+// Simulate streaming / typing delay
+await new Promise(r => setTimeout(r, 350 + Math.min(botReply.length * 8, 1200)));
+appendMessage('assistant', botReply);
+} finally {
+$typing.style.display = 'none';
+$send.disabled = false;
+}
+}
+
+/* === Bot local simple (règles) === */
+function fallbackLocal(userText){
+const t = userText.toLowerCase();
+if(/bonjour|salut|coucou/.test(t)) return "Bonjour ! Je suis un agent de démonstration. Comment puis-je aider ?";
+if(/présente|présente-toi|qui es tu/.test(t)) return "Je suis un agent conversationnel local (démo). Je peux répondre à des commandes simples, te raconter une blague, ou simuler un plan.";
+if(/blague|raconte/.test(t)) return "Pourquoi les programmes n'ont-ils jamais faim ? Parce qu'ils dévorent des octets ! 😂";
+if(/plan|journée|organise/.test(t)) return "Voici un plan simple : 1) Priorise 3 tâches importantes, 2) Bloque 2x25 min pour concentration, 3) Fais une pause de 10 min, 4) Revue en fin de journée.";
+if(/copine|sortie|lyon/.test(t)) return "Voici un plan simple : 1) zara, 2) cinéma, 3) part dieu, 4) bellecour ou abidjan";
+if(/merci|ok|parfait/.test(t)) return "Avec plaisir — dis-moi si tu veux autre chose.";
+if(/oui je veux autre chose/.test(t)) return "Dis-moi ce que tu veux : ";
+// fallback: echo + suggest
+return "Tu as dit : « " + userText + " ». (Ceci est une réponse de secours locale — connecte un backend pour des réponses plus riches.)";
+}
+
+/* === Gestion UI interactions === */
+$send.addEventListener('click', ()=> sendMessage($input.value));
+$input.addEventListener('keydown', (e)=>{
+if(e.key === 'Enter' && !e.shiftKey){
+e.preventDefault();
+sendMessage($input.value);
+}
+});
+document.getElementById('newConv').addEventListener('click', ()=> createConversation());
+document.getElementById('clearAll').addEventListener('click', ()=>{
+if(confirm('Effacer toutes les conversations ?')) {
+convos = [];
+currentId = null;
+save();
+renderConvos();
+$messages.innerHTML = '';
+$convTitle.textContent = 'Nouvelle conversation';
+$convTimestamp.textContent = '';
+}
+});
+$suggestions.addEventListener('click', (e)=>{
+if(e.target.tagName === 'BUTTON'){
+const txt = e.target.dataset.text;
+$input.value = txt;
+$input.focus();
+}
+});
+
+/* === Initialisation === */
+if(convos.length === 0) createConversation();
+renderConvos();
+if(convos[0]) openConversation(convos[0].id);
+
+/* === Accessibility: focus trap / announcements could be added here === */
+</script>
+
+<!-- NOTES / INSTRUCTIONS pour un backend LLM sécurisé -->
+<section style="max-width:920px;margin:16px auto;font-size:13px;color:var(--muted);">
+<h3>Notes pour production</h3>
+<ul>
+<li>Ne mettez jamais de clé d'API LLM dans le code client. Créez un serveur (ex. Node/Express) qui appelle l'API du modèle et expose une route sécurisée <code>/api/chat</code>.</li>
+<li>Le client envoie le message (&amp; éventuellement l'historique) au serveur. Le serveur appelle ensuite le LLM puis renvoie la réponse au client.</li>
+<li>Pour améliorer UX : streaming (sse/websocket) pour afficher la réponse en cours, modération côté serveur, gestion des tokens &amp; tarifs.</li>
+<li>Pour déployer : hébergeur Node, rate-limiting, journaux et surveillance.</li>
+</ul>
+</section>
+</body>
+</html>
